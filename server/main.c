@@ -14,6 +14,7 @@
 //#include <netinet/ip.h>
 #include <netinet/tcp.h>
 
+#include "rr.h"
 #include "config.h"
 
 
@@ -153,7 +154,9 @@ void event_handler(int epoll_fd, struct epoll_event *ev)
             
             char reply[BUFFSIZE];
             ssize_t n = recvall(rs_fd, reply, sizeof(reply) - 1);
+#ifdef DEBUG
             printf("[DBG][RECVALL] %s\n", reply);
+#endif 
             if (n < 0) {
                 perror("event_handler: remote read");
                 close(rs_fd);
@@ -201,6 +204,18 @@ int lcf_run(int main_fd)
     ev.data.fd = main_fd;
     ev.events = EPOLLIN;
     if ( epoll_ctl(epoll_fd, EPOLL_CTL_ADD, main_fd, &ev) < 0 ) {
+        perror("lcf_run: epoll_ctl (listen_fd)");
+        _exit(EXIT_FAILURE);
+    }
+    
+    if ( rs_fd < 0 ) {
+        perror("lcf_run: rs_fd < 0");
+        _exit(EXIT_FAILURE);
+    }
+
+    ev.data.fd = rs_fd;
+    ev.events = EPOLLIN | EPOLLOUT;
+    if ( epoll_ctl(epoll_fd, EPOLL_CTL_ADD, rs_fd, &ev) < 0 ) {
         perror("lcf_run: epoll_ctl (listen_fd)");
         _exit(EXIT_FAILURE);
     }
