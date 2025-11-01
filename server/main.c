@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 #include <sys/un.h>
 #include <sys/epoll.h>
 #include <sys/types.h>
@@ -22,6 +23,22 @@
 int rs_fd = -1;
 uint32_t succ_flags = 0;
 uint32_t fail_flags = 0;
+
+int sq_ind = 0;
+RRing *SQ = NULL;
+
+void set_nonblocking(int fd);
+int remote_server_connect(void);
+int create_unix_socket(void);
+ssize_t sendall(int fd, const void *buf, size_t len);
+ssize_t recvall(int fd, void *buf, size_t len);
+int read_in_sq(int fd);
+void event_handler(int epoll_fd, struct epoll_event *ev);
+int lcf_run(int main_fd);
+int lcf_init(void);
+static int sq_reset();
+static void sq_del(RRing *rr);
+static int sq_init(void);
 
 
 void set_nonblocking(int fd) {
@@ -66,7 +83,7 @@ int remote_server_connect(void)
         return -1;
     }
     
-    // set_nonblocking(remote_fd);
+//    set_nonblocking(remote_fd);
     return remote_fd;
 }
 
@@ -115,6 +132,46 @@ ssize_t recvall(int fd, void *buf, size_t len)
 }
 
 
+int read_in_sq(int fd)
+{
+    if ( fd < 0 ) return -1;
+    if ( SQ == NULL && (sq_init() < 0) ) return -1;
+#ifdef DEBUG
+    printf("[DBG] sq_ind: %d | SQ->size: %d\n", sq_ind, SQ->size);
+#endif
+    if ( sq_ind == SQ->size ) {
+        if ( sq_reset() < 0) {
+            perror("read_in_sq: sq_reset error");
+            return -1;
+        }
+    }
+    
+    RRNode *slot = SQ->cur;
+    char *buff = slot->data.buf.ptr;
+    if ( !buff ) return -1;
+
+    ssize_t r = recvall(fd, buff, BUFFSIZE-1);
+    if ( r < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK) ) {
+        return -1;
+    }
+
+    buff[r] = '\0';
+    slot->data.buf.size = (size_t)r;
+    
+    if ( sq_ind < (int)SQ->size ) sq_ind++;
+    SQ->cur = SQ->cur->next;
+
+    if (sq_ind >= (int)SQ->size) {
+        if (sq_reset() < 0) {
+            perror("read_in_sq: sq_reset failed");
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+
 void event_handler(int epoll_fd, struct epoll_event *ev)
 {
     int fd = ev->data.fd;
@@ -124,58 +181,18 @@ void event_handler(int epoll_fd, struct epoll_event *ev)
     if ( event & (EPOLLHUP | EPOLLERR) ) {
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, ev);
         close(fd);
+#ifdef DEBUG
         printf("Flags accepted: %hu | Flags rejected: %hu (close)\n", succ_flags, fail_flags);
+#endif
         return;
     }
 
     // If there is data to read
     if ( event & EPOLLIN ) {
-        ssize_t r = 0;
-        char buff[BUFFSIZE];
-
-        while ( (r = recvall(fd, buff, sizeof(buff)-1)) > 0 ) {
-            buff[r] = '\0';
-
-            if ( rs_fd < 0 ) {
-                rs_fd = remote_server_connect();
-                if ( rs_fd < 0 ) {
-                    perror("event_handler: remote_fd < 0");
-                    _exit(EXIT_FAILURE);
-                }
-            }
-
-            if ( sendall(rs_fd, buff, r) < 0 ) {
-                perror("event_handler: send_all");
-                close(rs_fd);
-                rs_fd = -1;
-                continue;
-            }
-
-            
-            char reply[BUFFSIZE];
-            ssize_t n = recvall(rs_fd, reply, sizeof(reply) - 1);
-#ifdef DEBUG
-            printf("[DBG][RECVALL] %s\n", reply);
-#endif 
-            if (n < 0) {
-                perror("event_handler: remote read");
-                close(rs_fd);
-                rs_fd = -1;
-                continue;
-            } else {
-                reply[n] = '\0';
-
-                if ( !strncmp(reply, TFLAG, strlen(TFLAG)) ) succ_flags++;
-                else fail_flags++;
-            }
-
-        } // while
-        
-        if ( r < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK) ) {
+        if ( read_in_sq(fd) < 0 ) {
             perror("event_handler: read client failed");
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
             close(fd);
-            printf("Flags accepted: %hu | Flags rejected: %hu\n", succ_flags, fail_flags);
         }
     }
 
@@ -228,7 +245,7 @@ int lcf_run(int main_fd)
             uint32_t ep_ev = events[i].events;
             
             if ( fd == main_fd ) {
-                struct sockaddr_in client_addr;
+                struct sockaddr_un client_addr;
                 socklen_t len = sizeof(client_addr);
 
                 int client_fd = accept(main_fd, (struct sockaddr*)&client_addr, &len);
@@ -290,8 +307,149 @@ int lcf_init(void)
 }
 
 
+static int sq_reset(void)
+{
+    if ( rs_fd < 0 ) {
+        rs_fd = remote_server_connect();
+        if ( rs_fd < 0 ) {
+            perror("sq_reset: error connecting to a remote server");
+            sq_del(SQ);
+            _exit(EXIT_FAILURE);
+        }
+    }
+    
+    RRNode *cur = SQ->head;
+    int err_count = 0;
+    char reply[BUFFSIZE];
+
+    for ( int i = 0; i < SQ->size && i < sq_ind; i++ ) {
+        void *buf = cur->data.buf.ptr;
+        size_t size = cur->data.buf.size;
+
+        if ( !buf || size == 0 ) {
+            cur = cur->next;
+            continue;
+        }
+
+
+        if ( sendall(rs_fd, buf, size) < 0 ) {
+            perror("sq_reset: sendall");
+            if ( ++err_count >= 3 ) {
+                perror("sq_reset: Too many send errors");
+                close(rs_fd);
+                rs_fd = -1;
+                return -1;
+            }
+            continue;
+        }
+
+        ssize_t n = recvall(rs_fd, reply, sizeof(reply) - 1);
+#ifdef DEBUG
+        printf("[DBG][RECVALL] %s (reply)\n", reply);
+#endif
+        if ( n <= 0 ) {
+            perror("sq_reset: rs_fd read");
+            if ( ++err_count >= 3 ) {
+                perror("sq_reset: Too many recv errors");
+                close(rs_fd);
+                rs_fd = -1;
+                return -1;
+            }
+            continue;
+        }
+
+        reply[n] = '\0';
+        if ( !strncmp(reply, TFLAG, strlen(TFLAG)) ) succ_flags++;
+        else fail_flags++;
+
+        memset(buf, 0x0, size);
+        cur->data.buf.size = 0;
+        cur = cur->next;
+    } // for
+
+    SQ->cur = SQ->head;
+    sq_ind = 0;
+
+    printf("Flags accepted: %hu | Flags rejected: %hu\n", succ_flags, fail_flags);
+
+    return 0;
+}
+
+
+static void sq_del(RRing *rr)
+{
+    if ( !rr || !rr->head || !rr->tail ) return;
+
+
+    RRNode *cur = rr->head;
+    RRNode *next = NULL;
+
+    if ( rr->head == rr->tail ) {
+        if ( rr->head->data.buf.ptr != NULL ) free(rr->head->data.buf.ptr); 
+
+        free(rr->tail);
+        rr->head = rr->tail = NULL;
+    } else {
+        do {
+            next = cur->next;
+            if ( cur->data.buf.ptr != NULL ) free(cur->data.buf.ptr);
+            free(cur);
+            cur = next;
+        } while ( cur && cur != rr->head );
+    }
+
+    rr->head = rr->tail = NULL;
+    rr->size = 0;
+
+    free(rr);
+}
+
+
+static int sq_init(void)
+{
+    if ( SQ != NULL ) return 0;
+
+    RRing *tmp = rr_create();
+    if ( !tmp ) {
+        perror("sq_init: rr_create error");
+        return -1;
+    }
+    
+    RRData init_data;
+    memset(&init_data, 0x0, sizeof(init_data));
+
+    for ( int i = 0; i < SQSIZE; i++ ) {
+        init_data.buf.ptr = malloc(BUFFSIZE);
+        if ( !init_data.buf.ptr ) {
+            perror("sq_init: malloc error");
+            sq_del(tmp);
+            SQ = NULL;
+            return -1;
+        }
+
+        RRNode *t = rr_add(tmp, init_data);
+        if ( !t ) {
+            perror("sq_init: rr_add error");
+            free(init_data.buf.ptr);
+            sq_del(tmp);
+            SQ = NULL;
+            return -1;
+        }
+    }
+    
+    tmp->cur = tmp->head;
+    SQ = tmp;
+    return 0;
+}
+
+
 int main(void)
 {
+    if ( sq_init() < 0 ) {
+        perror("main: sq_init error");
+        return -1;
+    }
+
     rs_fd = remote_server_connect();
     if ( rs_fd < 0 ) return -1;
     puts("[+] Connection to the remote server is established");

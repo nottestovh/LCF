@@ -8,7 +8,7 @@
 
 RRing* rr_create(void)
 {
-    RRing *rr = malloc(sizeof(RRing));
+    RRing *rr = (RRing*)malloc(sizeof(RRing));
     if ( !rr ) return NULL;
 
     rr->head = rr->tail = rr->cur = NULL;
@@ -23,7 +23,7 @@ RRNode* rr_add(RRing *rr, RRData data)
     if ( !rr ) return NULL;
     if ( rr->size == UINT32_MAX ) return NULL;
 
-    RRNode *node = malloc(sizeof(RRNode));
+    RRNode *node = (RRNode*)malloc(sizeof(RRNode));
     if ( !node ) return NULL;
     
     node->data = data;
@@ -74,13 +74,13 @@ void rr_del(RRing *rr)
 {
     if ( !rr || !rr->head || !rr->tail ) return;
 
+    RRNode *cur = rr->head;
+    RRNode *next = NULL;
+
     if ( rr->head == rr->tail ) {
         free(rr->tail);
         rr->head = rr->tail = NULL;
     } else {
-        RRNode *cur = rr->head;
-        RRNode *next = NULL;
-   
         do {
             next = cur->next;
             free(cur);

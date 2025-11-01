@@ -5,7 +5,10 @@
 #include <stdint.h>
 
 typedef union RRData {
-    void *ptr;
+    struct {
+        void *ptr;
+        size_t size;
+    } buf;
     uint64_t u64;
     uint32_t u32;
 } RRData;
