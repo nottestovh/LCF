@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/un.h>
+#include <sys/time.h>
 #include <sys/epoll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -23,6 +24,7 @@
 int rs_fd = -1;
 uint32_t succ_flags = 0;
 uint32_t fail_flags = 0;
+volatile sig_atomic_t sq_reset_flag = 0;
 
 int sq_ind = 0;
 RRing *SQ = NULL;
@@ -238,6 +240,16 @@ int lcf_run(int main_fd)
     }
 
     while (1) {
+        if ( sq_reset_flag ) {
+#ifdef DEBUG
+            puts("[DBG] Timer: SIGALRM");
+#endif
+            if ( sq_reset() < 0 ) {
+                perror("lcf_run: sq_reset error (timer)");
+            }
+            sq_reset_flag = 0;
+        }
+
         int n = epoll_wait(epoll_fd, events, MAX_CLIENTS, -1);
 
         for ( int i = 0; i < n; i++ ) {
@@ -443,8 +455,47 @@ static int sq_init(void)
 }
 
 
+void sigalrm_handler(int sig) {
+    (void)sig;
+    sq_reset_flag = 1;
+}
+
+
+int timer_init(void)
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sigalrm_handler;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGALRM, &sa, NULL) < 0) {
+        perror("sigaction");
+        return 1;
+    }
+
+    if ( (FLAGTTL - 5) < 20 ) {
+        perror("timer_init: FLAGTTL < 25");
+        return -1;
+    }
+
+    struct itimerval it = {0};
+    it.it_interval.tv_sec = FLAGTTL-5;
+    it.it_value.tv_sec = FLAGTTL-5;
+    if (setitimer(ITIMER_REAL, &it, NULL) < 0) {
+        perror("setitimer");
+        return 1;
+    }
+
+    return 0;
+}
+
+
 int main(void)
 {
+    if ( timer_init() < 0 ) {
+        perror("main: timer_init error");
+        return -1;
+    }
+
     if ( sq_init() < 0 ) {
         perror("main: sq_init error");
         return -1;
