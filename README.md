@@ -21,9 +21,9 @@ This will compile the server and client binaries into the `bin/` directory.
 
 Edit the `server/config.h` file to customize settings:
 - `FLAGTTL`: Flag lifetime (time to live) in seconds.
-- `SQSIZE`: Size of the flag submission queue.
-- `RHOST`: IP address of the remote host where flags should be sent for checking.
-- `RPORT`: Remote port of the server for flag submission.
+- `SQSIZE` : Size of the flag submission queue.
+- `RHOST`  : IP address of the remote host where flags should be sent for checking.
+- `RPORT`  : Remote port of the server for flag submission.
 
 Make sure to rebuild the project after changes: `make all`
 
