@@ -31,7 +31,7 @@ Make sure to rebuild the project after changes: `make all`
 ## Usage
 
 1. Run the server: `bin/server`
-2. Run the exploit: `bin/client ./exp`
+2. Run the exploit: ```bin/client ./exp```
    The exploit (`./exp`) should output flags to stdout.
 
 
