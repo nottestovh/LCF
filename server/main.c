@@ -26,7 +26,7 @@ uint32_t succ_flags = 0;
 uint32_t fail_flags = 0;
 volatile sig_atomic_t sq_reset_flag = 0;
 
-int sq_ind = 0;
+size_t sq_ind = 0;
 RRing *SQ = NULL;
 
 void set_nonblocking(int fd);
@@ -160,10 +160,10 @@ int read_in_sq(int fd)
     buff[r] = '\0';
     slot->data.buf.size = (size_t)r;
     
-    if ( sq_ind < (int)SQ->size ) sq_ind++;
+    if ( sq_ind < SQ->size ) sq_ind++;
     SQ->cur = SQ->cur->next;
 
-    if (sq_ind >= (int)SQ->size) {
+    if (sq_ind >= SQ->size) {
         if (sq_reset() < 0) {
             perror("read_in_sq: sq_reset failed");
             return -1;
@@ -233,7 +233,7 @@ int lcf_run(int main_fd)
     }
 
     ev.data.fd = rs_fd;
-    ev.events = EPOLLIN | EPOLLOUT;
+    ev.events = EPOLLIN | EPOLLHUP | EPOLLERR;
     if ( epoll_ctl(epoll_fd, EPOLL_CTL_ADD, rs_fd, &ev) < 0 ) {
         perror("lcf_run: epoll_ctl (listen_fd)");
         _exit(EXIT_FAILURE);
@@ -257,6 +257,13 @@ int lcf_run(int main_fd)
             uint32_t ep_ev = events[i].events;
             
             if ( fd == main_fd ) {
+                if ( ep_ev & (EPOLLHUP | EPOLLERR) ) {
+                    fprintf(stderr, "lcf_run: main_fd error\n");
+                    close(main_fd);
+                    close(rs_fd);
+                    return -1;
+                }
+
                 struct sockaddr_un client_addr;
                 socklen_t len = sizeof(client_addr);
 
@@ -274,6 +281,12 @@ int lcf_run(int main_fd)
                     fprintf(stderr, "lcf_run: epoll_ctl error (client_fd: %d)\n", client_fd);
                     close(client_fd);
                     continue;
+                }
+            } else if ( fd == rs_fd ) {
+                if ( ep_ev & (EPOLLHUP | EPOLLERR) ) {
+                    fprintf(stderr, "lcf_run: rs_fd closed or errored - exiting\n");
+                    close(rs_fd);
+                    return -1;
                 }
             } else {
                 event_handler(epoll_fd, &events[i]);
@@ -334,7 +347,7 @@ static int sq_reset(void)
     int err_count = 0;
     char reply[BUFFSIZE];
 
-    for ( int i = 0; i < SQ->size && i < sq_ind; i++ ) {
+    for ( size_t i = 0; i < SQ->size && i < sq_ind; i++ ) {
         void *buf = cur->data.buf.ptr;
         size_t size = cur->data.buf.size;
 
