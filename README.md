@@ -8,6 +8,7 @@ The farm focuses on local usage, making it convenient for individual participant
 
 1. Clone the repository:
   `git clone https://github.com/nottestovh/LCF.git`
+
   `cd LCF`
 2. Build the project:
    `make all`
