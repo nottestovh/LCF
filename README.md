@@ -7,10 +7,10 @@ The farm focuses on local usage, making it convenient for individual participant
 ## Installation
 
 1. Clone the repository:
-  git clone https://github.com/nottestovh/LCF.git
-  cd LCF
+  `git clone https://github.com/nottestovh/LCF.git`
+  `cd LCF`
 2. Build the project:
-   make all
+   `make all`
    
 This will compile the server and client binaries into the `bin/` directory.
 
@@ -23,24 +23,16 @@ Edit the `server/config.h` file to customize settings:
 - `RHOST`: IP address of the remote host where flags should be sent for checking.
 - `RPORT`: Remote port of the server for flag submission.
 
-Make sure to rebuild the project after changes:
-  make all
+Make sure to rebuild the project after changes: `make all`
 
 
 ## Usage
 
-1. Run the server:
-   bin/server
-   
-The server handles flag management and submissions asynchronously.
-
-2. Run the exploit:
-  bin/client ./exp
-
-The exploit (`./exp`) should output flags to stdout.
+1. Run the server: `bin/server`
+2. Run the exploit: `bin/client ./exp`
+   The exploit (`./exp`) should output flags to stdout.
 
 
 ## Cleaning Up
 
-To clean the build artifacts:
-  make clean
+To clean the build artifacts: `make clean`
