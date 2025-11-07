@@ -30,9 +30,9 @@ Make sure to rebuild the project after changes: `make all`
 
 ## Usage
 
+The exploit (`./exp`) should output flags to stdout.
 1. Run the server: `bin/server`
-2. Run the exploit: ```bin/client ./exp```
-   The exploit (`./exp`) should output flags to stdout.
+2. Run the exploit: `bin/client ./exp`
 
 
 ## Cleaning Up
