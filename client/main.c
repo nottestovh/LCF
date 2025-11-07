@@ -53,7 +53,6 @@ int main(int argc, char **argv)
         return -1;
     } else if ( pid == 0 ) {
         dup2(lcf_fd, STDOUT_FILENO);
-        printf("FLAG{T3ST}");
         close(lcf_fd);
         execl(argv[1], (char*)&argv[1], (char*)NULL);
         _exit(EXIT_FAILURE);
